@@ -11,7 +11,8 @@ import (
 // Codec creates a CodecRequest to process each request.
 type Codec interface {
 	NewRequest(req Request) CodecRequest
-	NewResponse(data interface{}) (string, CodecResponse)
+	NewResponse(data interface{}) CodecResponse
+	ContentType() string
 }
 
 // CodecRequest decodes a request and encodes a response using a specific
@@ -68,6 +69,10 @@ func (o *observer) worker(name string, queueName string, deliveryCh <-chan amqp.
 		close(outCh)
 	}()
 	for d := range deliveryCh {
+		if d.ContentType != o.codec.ContentType() {
+			continue
+		}
+
 		data := reflect.New(reflect.TypeOf(reply))
 		req := o.codec.NewRequest(
 			&request{d: d},
@@ -120,13 +125,13 @@ func (o *observer) Pub(service string, data interface{}) error {
 		return err
 	}
 
-	contentType, resp := o.codec.NewResponse(data)
+	resp := o.codec.NewResponse(data)
 	dataBytes, err := resp.Body()
 	if err != nil {
 		return err
 	}
 	err = o.ch.Publish(name, "", false, false, amqp.Publishing{
-		ContentType: contentType,
+		ContentType: o.codec.ContentType(),
 		Body:        dataBytes,
 	})
 	if err != nil {

@@ -27,8 +27,12 @@ func (c *Codec) NewRequest(r observer.Request) observer.CodecRequest {
 	return &codecRequest{request: r}
 }
 
-func (c *Codec) NewResponse(data interface{}) (string, observer.CodecResponse) {
-	return contentType, &codecResponse{data: data}
+func (c *Codec) NewResponse(data interface{}) observer.CodecResponse {
+	return &codecResponse{data: data}
+}
+
+func (c *Codec) ContentType() string {
+	return contentType
 }
 
 func (c *codecResponse) Body() ([]byte, error) {
