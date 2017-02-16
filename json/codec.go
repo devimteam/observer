@@ -2,8 +2,11 @@ package json
 
 import (
 	"encoding/json"
+
 	"github.com/l-vitaly/observer"
 )
+
+const contentType = "application/json"
 
 type Codec struct {
 }
@@ -17,19 +20,19 @@ type codecRequest struct {
 }
 
 type codecResponse struct {
-    data interface{}
+	data interface{}
 }
 
 func (c *Codec) NewRequest(r observer.Request) observer.CodecRequest {
 	return &codecRequest{request: r}
 }
 
-func (c *Codec) NewResponse(data interface{}) observer.CodecResponse {
-    return &codecResponse{data: data}
+func (c *Codec) NewResponse(data interface{}) (string, observer.CodecResponse) {
+	return contentType, &codecResponse{data: data}
 }
 
 func (c *codecResponse) Body() ([]byte, error) {
-    return json.Marshal(c.data)
+	return json.Marshal(c.data)
 }
 
 func (c *codecRequest) ReadRequest(args interface{}) error {

@@ -1,6 +1,7 @@
 package observer
 
 import (
+	"fmt"
 	"log"
 	"reflect"
 
@@ -10,7 +11,7 @@ import (
 // Codec creates a CodecRequest to process each request.
 type Codec interface {
 	NewRequest(req Request) CodecRequest
-	NewResponse(data interface{}) CodecResponse
+	NewResponse(data interface{}) (string, CodecResponse)
 }
 
 // CodecRequest decodes a request and encodes a response using a specific
@@ -36,31 +37,42 @@ func (e Event) Commit() {
 }
 
 type Observer interface {
-	Sub(name string, chType interface{}) (OutCh, error)
-	Pub(name string, data interface{}) error
+	Sub(service string, reply interface{}) (OutCh, error)
+	Pub(service string, data interface{}) error
 }
 
 type observer struct {
-	ch    *amqp.Channel
-	codec Codec
+	ch      *amqp.Channel
+	codec   Codec
+	workers int
 }
 
-func New(channel *amqp.Channel, codec Codec) Observer {
+func New(channel *amqp.Channel, codec Codec, workers int) Observer {
 	return &observer{
-		ch:    channel,
-		codec: codec,
+		ch:      channel,
+		codec:   codec,
+		workers: workers,
 	}
 }
 
-func (o *observer) eachDelivery(deliveryCh <-chan amqp.Delivery, outCh OutCh, chType interface{}) {
+func (o *observer) makeExchangeName(service, i interface{}) string {
+	return fmt.Sprintf("event.%s.%s", service, reflect.Indirect(
+		reflect.ValueOf(i)).Type().Name(),
+	)
+}
+
+func (o *observer) worker(name string, queueName string, deliveryCh <-chan amqp.Delivery, outCh OutCh, reply interface{}) {
+	defer func() {
+		o.ch.QueueUnbind(queueName, "", name, nil)
+		o.ch.QueueDelete(queueName, false, false, false)
+		close(outCh)
+	}()
 	for d := range deliveryCh {
-		data := reflect.New(reflect.TypeOf(chType))
+		data := reflect.New(reflect.TypeOf(reply))
 		req := o.codec.NewRequest(
 			&request{d: d},
 		)
 		err := req.ReadRequest(data.Interface())
-
-
 
 		if err != nil {
 			log.Println(err)
@@ -72,16 +84,9 @@ func (o *observer) eachDelivery(deliveryCh <-chan amqp.Delivery, outCh OutCh, ch
 	}
 }
 
-func (o *observer) waitPub(name string, queueName string, deliveryCh <-chan amqp.Delivery, outCh OutCh, chType interface{}) {
-	defer func() {
-		o.ch.QueueUnbind(queueName, "", name, nil)
-		o.ch.QueueDelete(queueName, false, false, false)
-		close(outCh)
-	}()
-	o.eachDelivery(deliveryCh, outCh, chType)
-}
+func (o *observer) Sub(service string, reply interface{}) (OutCh, error) {
+	name := o.makeExchangeName(service, reply)
 
-func (o *observer) Sub(name string, chType interface{}) (OutCh, error) {
 	err := o.ch.ExchangeDeclare(name, "fanout", true, false, false, false, nil)
 	if err != nil {
 		return nil, err
@@ -99,22 +104,29 @@ func (o *observer) Sub(name string, chType interface{}) (OutCh, error) {
 		return nil, err
 	}
 	outCh := make(OutCh)
-	go o.waitPub(name, q.Name, deliveryCh, outCh, chType)
+
+	for w := 1; w <= o.workers; w++ {
+		go o.worker(name, q.Name, deliveryCh, outCh, reflect.Indirect(reflect.ValueOf(reply)).Interface())
+	}
+
 	return outCh, nil
 }
 
-func (o *observer) Pub(name string, data interface{}) error {
+func (o *observer) Pub(service string, data interface{}) error {
+	name := o.makeExchangeName(service, data)
+	log.Println(name)
 	err := o.ch.ExchangeDeclare(name, "fanout", true, false, false, false, nil)
 	if err != nil {
 		return err
 	}
-	resp := o.codec.NewResponse(data)
+
+	contentType, resp := o.codec.NewResponse(data)
 	dataBytes, err := resp.Body()
 	if err != nil {
 		return err
 	}
 	err = o.ch.Publish(name, "", false, false, amqp.Publishing{
-		ContentType: "application/json",
+		ContentType: contentType,
 		Body:        dataBytes,
 	})
 	if err != nil {
