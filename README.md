@@ -9,7 +9,7 @@ Publish event - Pub(service string, data interface{}) error
 
 ## Sub
 
-``` golang
+``` go
 package main
 
 import (
@@ -47,7 +47,7 @@ func main() {
 
 ## Pub
 
-``` golang
+``` go
 package main
 
 import (
