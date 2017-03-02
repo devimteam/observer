@@ -34,8 +34,8 @@ func main() {
 	if err != nil {
 	    panic(err)
 	}
-	observ := observer.New(ch, json.NewCodec(), 3) // 3 workers
-    chOut, err := observ.Sub(service, &CreateUserEvent{})
+	observ := observer.New(ch, json.NewCodec())
+    chOut, err := observ.Sub("serviceName", &CreateUserEvent{})
     if err != nil {
    	    panic(err)
    	}
@@ -72,8 +72,8 @@ func main() {
 	if err != nil {
 	    panic(err)
 	}
-	observ := observer.New(ch, json.NewCodec(), 3) // 3 workers
-	err = observ.Pub(service, &CreateUserEvent{ID: 1, Name: "Hello World"})
+	observ := observer.New(ch, json.NewCodec())
+	err = observ.Pub("serviceName", &CreateUserEvent{ID: 1, Name: "Hello World"})
 	if err != nil {
         panic(err)
     }
