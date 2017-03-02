@@ -43,16 +43,14 @@ type Observer interface {
 }
 
 type observer struct {
-	ch      *amqp.Channel
-	codec   Codec
-	workers int
+	ch    *amqp.Channel
+	codec Codec
 }
 
-func New(channel *amqp.Channel, codec Codec, workers int) Observer {
+func New(channel *amqp.Channel, codec Codec) Observer {
 	return &observer{
-		ch:      channel,
-		codec:   codec,
-		workers: workers,
+		ch:    channel,
+		codec: codec,
 	}
 }
 
@@ -110,9 +108,7 @@ func (o *observer) Sub(service string, reply interface{}) (OutCh, error) {
 	}
 	outCh := make(OutCh)
 
-	for w := 1; w <= o.workers; w++ {
-		go o.worker(name, q.Name, deliveryCh, outCh, reflect.Indirect(reflect.ValueOf(reply)).Interface())
-	}
+	go o.worker(name, q.Name, deliveryCh, outCh, reflect.Indirect(reflect.ValueOf(reply)).Interface())
 
 	return outCh, nil
 }

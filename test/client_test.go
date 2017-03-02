@@ -27,7 +27,7 @@ func TestJSONClient(t *testing.T) {
 	ch, err := conn.Channel()
 	u.AssertNotError(err, gounit.EmptyMessage)
 
-	observ := observer.New(ch, json.NewCodec(), 3)
+	observ := observer.New(ch, json.NewCodec())
 
 	doneCh := make(chan observer.Event)
 
@@ -61,7 +61,7 @@ func TestProtoClient(t *testing.T) {
 	ch, err := conn.Channel()
 	u.AssertNotError(err, gounit.EmptyMessage)
 
-	observ := observer.New(ch, proto.NewCodec(), 3)
+	observ := observer.New(ch, proto.NewCodec())
 
 	doneCh := make(chan observer.Event)
 
