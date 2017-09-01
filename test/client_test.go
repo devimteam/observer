@@ -5,10 +5,10 @@ import (
 	"time"
 
 	"github.com/l-vitaly/gounit"
-	"github.com/l-vitaly/observer"
-	"github.com/l-vitaly/observer/json"
-	"github.com/l-vitaly/observer/proto"
-	"github.com/l-vitaly/observer/test/pb"
+	"github.com/devimteam/observer"
+	"github.com/devimteam/observer/json"
+	"github.com/devimteam/observer/proto"
+	"github.com/devimteam/observer/test/pb"
 	"github.com/streadway/amqp"
 )
 

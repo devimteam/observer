@@ -3,7 +3,7 @@ package json
 import (
 	"encoding/json"
 
-	"github.com/l-vitaly/observer"
+	"github.com/devimteam/observer"
 )
 
 const contentType = "application/json"

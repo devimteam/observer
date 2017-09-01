@@ -2,7 +2,7 @@ package proto
 
 import (
 	"github.com/gogo/protobuf/proto"
-	"github.com/l-vitaly/observer"
+	"github.com/devimteam/observer"
 )
 
 const contentType = "application/protobuf"
