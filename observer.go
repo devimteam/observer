@@ -281,7 +281,6 @@ func (o *observer) Pub(exchangeName string,
 		publishCfg = DefaultPublishConfig()
 	}
 
-	log.Println(exchangeName)
 	err := o.ch.ExchangeDeclare(exchangeName,
 		exchangeCfg.Kind,
 		exchangeCfg.Durable,
