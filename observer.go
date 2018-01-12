@@ -2,7 +2,6 @@ package observer
 
 import (
 	"fmt"
-	"log"
 	"reflect"
 
 	"github.com/streadway/amqp"
@@ -35,98 +34,6 @@ func (e Event) Commit() {
 	e.d.Ack(false)
 }
 
-type ExchangeConfig struct {
-	Kind       string
-	Durable    bool
-	AutoDelete bool
-	Internal   bool
-	NoWait     bool
-	Args       amqp.Table
-}
-
-func DefaultExchangeConfig() *ExchangeConfig {
-	return &ExchangeConfig{
-		Kind:       "fanout",
-		Durable:    true,
-		AutoDelete: false,
-		Internal:   false,
-		NoWait:     false,
-		Args:       nil,
-	}
-}
-
-type QueueConfig struct {
-	Name       string
-	Durable    bool
-	AutoDelete bool
-	Exclusive  bool
-	NoWait     bool
-	IfUnused   bool
-	IfEmpty    bool
-	Args       amqp.Table
-}
-
-func DefaultQueueConfig() *QueueConfig {
-	return &QueueConfig{
-		Name:       "",
-		Durable:    false,
-		AutoDelete: false,
-		Exclusive:  true,
-		NoWait:     false,
-		IfUnused:   false,
-		IfEmpty:    false,
-		Args:       nil,
-	}
-}
-
-type QueueBindConfig struct {
-	Key    string
-	NoWait bool
-	Args   amqp.Table
-}
-
-func DefaultQueueBindConfig() *QueueBindConfig {
-	return &QueueBindConfig{
-		Key:    "",
-		NoWait: false,
-		Args:   nil,
-	}
-}
-
-type ConsumeConfig struct {
-	Consumer  string
-	AutoAck   bool
-	Exclusive bool
-	NoLocal   bool
-	NoWait    bool
-	Args      amqp.Table
-}
-
-func DefaultConsumeConfig() *ConsumeConfig {
-	return &ConsumeConfig{
-		Consumer:  "",
-		AutoAck:   false,
-		Exclusive: false,
-		NoLocal:   false,
-		NoWait:    false,
-		Args:      nil,
-	}
-}
-
-type PublishConfig struct {
-	Key       string
-	Mandatory bool
-	Immediate bool
-}
-
-func DefaultPublishConfig() *PublishConfig {
-	return &PublishConfig{
-		Key:       "",
-		Immediate: false,
-		Mandatory: false,
-	}
-}
-
 type Observer interface {
 	Sub(service string,
 		reply interface{},
@@ -134,7 +41,7 @@ type Observer interface {
 		queueConfig *QueueConfig,
 		bindConfig *QueueBindConfig,
 		consumeConfig *ConsumeConfig,
-	) (<-chan Event, error)
+	) (<-chan Event, <-chan error, error)
 	Pub(service string,
 		data interface{},
 		config *ExchangeConfig,
@@ -158,6 +65,7 @@ func (o *observer) worker(exchangeName string,
 	queueName string,
 	deliveryCh <-chan amqp.Delivery,
 	outCh chan<- Event,
+	errorCh chan<- error,
 	reply interface{},
 	key string,
 	ifUnused bool,
@@ -168,7 +76,6 @@ func (o *observer) worker(exchangeName string,
 	defer func() {
 		o.ch.QueueUnbind(queueName, key, exchangeName, args)
 		o.ch.QueueDelete(queueName, ifUnused, ifEmpty, noWait)
-		close(outCh)
 	}()
 	for d := range deliveryCh {
 		if d.ContentType != o.codec.ContentType() {
@@ -182,7 +89,7 @@ func (o *observer) worker(exchangeName string,
 		err := req.ReadRequest(data.Interface())
 
 		if err != nil {
-			log.Println(err)
+			errorCh <- err
 		}
 		outCh <- Event{
 			d:    d,
@@ -197,7 +104,7 @@ func (o *observer) Sub(exchangeName string,
 	queueCfg *QueueConfig,
 	queueBindCfg *QueueBindConfig,
 	consumeCfg *ConsumeConfig,
-) (<-chan Event, error) {
+) (<-chan Event, <-chan error, error) {
 	if exchangeCfg == nil {
 		exchangeCfg = DefaultExchangeConfig()
 	}
@@ -220,7 +127,7 @@ func (o *observer) Sub(exchangeName string,
 		exchangeCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("exchange declare err: %v", err)
+		return nil, nil, fmt.Errorf("exchange declare err: %v", err)
 	}
 	q, err := o.ch.QueueDeclare(queueCfg.Name,
 		queueCfg.Durable,
@@ -230,7 +137,7 @@ func (o *observer) Sub(exchangeName string,
 		queueCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("queue declare err: %v", err)
+		return nil, nil, fmt.Errorf("queue declare err: %v", err)
 	}
 	err = o.ch.QueueBind(q.Name,
 		queueBindCfg.Key,
@@ -239,7 +146,7 @@ func (o *observer) Sub(exchangeName string,
 		queueBindCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("queue bind err: %v", err)
+		return nil, nil, fmt.Errorf("queue bind err: %v", err)
 	}
 	deliveryCh, err := o.ch.Consume(q.Name,
 		consumeCfg.Consumer,
@@ -250,14 +157,17 @@ func (o *observer) Sub(exchangeName string,
 		consumeCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("consume err: %v", err)
+		return nil, nil, fmt.Errorf("consume err: %v", err)
 	}
 	outCh := make(chan Event)
+	errCh := make(chan error)
 
-	go o.worker(exchangeName,
+	go o.worker(
+		exchangeName,
 		q.Name,
 		deliveryCh,
 		outCh,
+		errCh,
 		reflect.Indirect(reflect.ValueOf(reply)).Interface(),
 		queueBindCfg.Key,
 		queueCfg.IfUnused,
@@ -266,7 +176,7 @@ func (o *observer) Sub(exchangeName string,
 		queueBindCfg.Args,
 	)
 
-	return outCh, nil
+	return outCh, errCh, nil
 }
 
 func (o *observer) Pub(exchangeName string,
