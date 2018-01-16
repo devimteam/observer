@@ -1,10 +1,11 @@
+// fixme: Not compilable test
 package test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/l-vitaly/gounit"
+	"github.com/devimteam/gounit"
 	"github.com/devimteam/observer"
 	"github.com/devimteam/observer/json"
 	"github.com/devimteam/observer/proto"

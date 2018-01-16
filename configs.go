@@ -35,10 +35,10 @@ type QueueConfig struct {
 
 func DefaultQueueConfig() *QueueConfig {
 	return &QueueConfig{
-		Name:       "",
-		Durable:    false,
+		Name:       "queue" + genRandomString(15),
+		Durable:    true,
 		AutoDelete: false,
-		Exclusive:  true,
+		Exclusive:  false,
 		NoWait:     false,
 		IfUnused:   false,
 		IfEmpty:    false,
