@@ -33,8 +33,8 @@ func TestJSONClient(t *testing.T) {
 	doneCh := make(chan observer.Event)
 
 	go func() {
-		chOut, err := observ.Sub(service, &EventResult{})
-		u.AssertNotError(err, gounit.EmptyMessage)
+		chOut, err, _ := observ.Sub(service, &EventResult{}, nil, nil, nil, nil)
+		u.AssertNotError(<-err, gounit.EmptyMessage)
 
 		e := <-chOut
 
@@ -43,7 +43,7 @@ func TestJSONClient(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
-	err = observ.Pub(service, &EventResult{Name: "Pegas"})
+	err = observ.Pub(service, &EventResult{Name: "Pegas"}, nil, nil)
 	u.AssertNotError(err, gounit.EmptyMessage)
 
 	e := <-doneCh
@@ -67,8 +67,8 @@ func TestProtoClient(t *testing.T) {
 	doneCh := make(chan observer.Event)
 
 	go func() {
-		chOut, err := observ.Sub(service, &pb.EventResult{})
-		u.AssertNotError(err, gounit.EmptyMessage)
+		chOut, err, _ := observ.Sub(service, &pb.EventResult{}, nil, nil, nil, nil)
+		u.AssertNotError(<-err, gounit.EmptyMessage)
 
 		e := <-chOut
 
@@ -77,7 +77,7 @@ func TestProtoClient(t *testing.T) {
 
 	time.Sleep(3 * time.Second)
 
-	err = observ.Pub(service, &pb.EventResult{Name: "Pegas"})
+	err = observ.Pub(service, &pb.EventResult{Name: "Pegas"}, nil, nil)
 	u.AssertNotError(err, gounit.EmptyMessage)
 
 	e := <-doneCh

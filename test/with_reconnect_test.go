@@ -3,10 +3,9 @@ package test
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
-
-	"sync"
 
 	"github.com/devimteam/observer"
 	"github.com/devimteam/observer/json"
@@ -49,12 +48,10 @@ func TestWithReconnect(t *testing.T) {
 		}
 		go func() {
 			for {
-				//t.Log(<-errCh1)
 				fmt.Println("subscriber: ", <-errCh1)
 			}
 		}()
-		for ev := range *events {
-			//t.Log(ev.Data)
+		for ev := range events {
 			fmt.Println("subscriber: ", ev.Data)
 		}
 	}()
@@ -63,7 +60,6 @@ func TestWithReconnect(t *testing.T) {
 	for s := 0; s < 15; s++ {
 		err := observer.Pub("test", X{strconv.Itoa(s)}, nil, nil)
 		if err != nil {
-			//t.Log("pub error", err)
 			fmt.Println("publisher: pub error:", err)
 			s--
 		}
@@ -102,7 +98,7 @@ func TestWithReconnectDifObservers(t *testing.T) {
 				fmt.Println("subscriber: ", <-errCh1)
 			}
 		}()
-		for ev := range *events {
+		for ev := range events {
 			fmt.Println("subscriber: ", ev.Data)
 		}
 	}()
@@ -111,7 +107,6 @@ func TestWithReconnectDifObservers(t *testing.T) {
 	for s := 0; s < 15; s++ {
 		err := publisher.Pub("test", X{strconv.Itoa(s)}, nil, nil)
 		if err != nil {
-			//t.Log("pub error", err)
 			fmt.Println("publisher: pub error:", err)
 			s--
 		}
@@ -138,7 +133,7 @@ func subFunc(prefix string, obs observer.Observer, quecfg *observer.QueueConfig)
 			fmt.Println(prefix, "err:", <-errCh1)
 		}
 	}()
-	for ev := range *events {
+	for ev := range events {
 		fmt.Println(prefix, "data:", ev.Data)
 		ev.Commit()
 	}

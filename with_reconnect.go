@@ -38,8 +38,8 @@ func WithReconnect(codec Codec, url string, config amqp.Config, reconnectParams 
 	}
 	o.isConnected.Lock()
 	errCh := make(chan error)
-	const MaxErrorGoroutines = 5
-	s := newChanErrorSenderWithCap(MaxErrorGoroutines, errCh)
+	const SenderBuffer = 5
+	s := newChanErrorSenderWithCap(SenderBuffer, errCh)
 	go func() {
 		for {
 			if !o.isConnected.IsLocked() {
@@ -81,7 +81,7 @@ func (o *observerWithReconnect) Sub(
 	queueCfg *QueueConfig,
 	queueBindCfg *QueueBindConfig,
 	consumeCfg *ConsumeConfig,
-) (*chan Event, <-chan error, chan<- bool) {
+) (<-chan Event, <-chan error, chan<- bool) {
 	exchangeCfg, queueCfg, queueBindCfg, consumeCfg = initSubscribeConfigs(exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
 	o.waitForConnection()
 
@@ -102,7 +102,7 @@ func (o *observerWithReconnect) Sub(
 		consumeCfg,
 	)
 
-	return &outCh, errCh, doneCh
+	return outCh, errCh, doneCh
 }
 
 func (o *observerWithReconnect) Pub(
@@ -143,7 +143,7 @@ func (o *observerWithReconnect) Pub(
 func (o *observerWithReconnect) listener(
 	exchangeName string,
 	outCh chan<- Event,
-	doneCh <-chan bool,
+	doneCh chan bool,
 	errorSender *chanErrorSenderWithCap,
 	reply interface{},
 	exchangeCfg *ExchangeConfig,
@@ -162,6 +162,8 @@ func (o *observerWithReconnect) listener(
 	for {
 		select {
 		case <-doneCh:
+			close(outCh)
+			close(doneCh)
 			return
 		default:
 			queueName, err = o.declareQueue(exchangeName, exchangeCfg, queueCfg, queueBindCfg, consumeCfg)

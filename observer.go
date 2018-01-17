@@ -41,7 +41,7 @@ type Observer interface {
 		queueConfig *QueueConfig,
 		bindConfig *QueueBindConfig,
 		consumeConfig *ConsumeConfig,
-	) (eventChan *chan Event, errorChan <-chan error, doneChan chan<- bool)
+	) (eventChan <-chan Event, errorChan <-chan error, doneChan chan<- bool)
 	Pub(service string,
 		data interface{},
 		config *ExchangeConfig,
@@ -110,7 +110,7 @@ func (o *observer) Sub(exchangeName string,
 	queueCfg *QueueConfig,
 	queueBindCfg *QueueBindConfig,
 	consumeCfg *ConsumeConfig,
-) (outCh *chan Event, errCh <-chan error, doneCh chan<- bool) {
+) (outCh <-chan Event, errCh <-chan error, doneCh chan<- bool) {
 	if exchangeCfg == nil {
 		exchangeCfg = DefaultExchangeConfig()
 	}
@@ -124,7 +124,7 @@ func (o *observer) Sub(exchangeName string,
 		consumeCfg = DefaultConsumeConfig()
 	}
 	outC := make(chan Event)
-	outCh = &outC
+	outCh = outC
 	errC := make(chan error)
 	errCh = errC
 	doneC := make(chan bool, 1)
@@ -139,7 +139,7 @@ func (o *observer) Sub(exchangeName string,
 		exchangeCfg.Args,
 	)
 	if err != nil {
-		go sendToErrCh(errC, fmt.Errorf("exchange declare err: %v", err))
+		errC <- fmt.Errorf("exchange declare err: %v", err)
 		return
 	}
 	q, err := o.ch.QueueDeclare(queueCfg.Name,
@@ -150,7 +150,8 @@ func (o *observer) Sub(exchangeName string,
 		queueCfg.Args,
 	)
 	if err != nil {
-		go sendToErrCh(errC, fmt.Errorf("queue declare err: %v", err))
+		errC <- fmt.Errorf("queue declare err: %v", err)
+		return
 	}
 	err = o.ch.QueueBind(q.Name,
 		queueBindCfg.Key,
@@ -159,7 +160,8 @@ func (o *observer) Sub(exchangeName string,
 		queueBindCfg.Args,
 	)
 	if err != nil {
-		go sendToErrCh(errC, fmt.Errorf("queue bind err: %v", err))
+		errC <- fmt.Errorf("queue bind err: %v", err)
+		return
 	}
 	deliveryCh, err := o.ch.Consume(q.Name,
 		consumeCfg.Consumer,
@@ -170,7 +172,7 @@ func (o *observer) Sub(exchangeName string,
 		consumeCfg.Args,
 	)
 	if err != nil {
-		go sendToErrCh(errC, fmt.Errorf("consume err: %v", err))
+		errC <- fmt.Errorf("consume err: %v", err)
 		return
 	}
 
@@ -190,10 +192,6 @@ func (o *observer) Sub(exchangeName string,
 	)
 
 	return
-}
-
-func sendToErrCh(ch chan<- error, err error) {
-	ch <- err
 }
 
 func (o *observer) Pub(exchangeName string,

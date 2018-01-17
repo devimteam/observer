@@ -17,7 +17,7 @@ func NewSleeper(cap int, delay time.Duration) *sleeper {
 }
 
 func (s *sleeper) Sleep() {
-	time.Sleep(s.baseDelay * time.Duration(s.currentCap))
+	time.Sleep(s.baseDelay * time.Duration(expOf2(uint(s.currentCap))))
 }
 
 func (s *sleeper) Inc() {
@@ -28,4 +28,8 @@ func (s *sleeper) Inc() {
 
 func (s *sleeper) Drop() {
 	s.currentCap = 1
+}
+
+func expOf2(x uint) uint {
+	return 2 << x
 }
