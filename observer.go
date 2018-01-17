@@ -2,7 +2,6 @@ package observer
 
 import (
 	"fmt"
-	"log"
 	"reflect"
 
 	"github.com/streadway/amqp"
@@ -35,98 +34,6 @@ func (e Event) Commit() {
 	e.d.Ack(false)
 }
 
-type ExchangeConfig struct {
-	Kind       string
-	Durable    bool
-	AutoDelete bool
-	Internal   bool
-	NoWait     bool
-	Args       amqp.Table
-}
-
-func DefaultExchangeConfig() *ExchangeConfig {
-	return &ExchangeConfig{
-		Kind:       "fanout",
-		Durable:    true,
-		AutoDelete: false,
-		Internal:   false,
-		NoWait:     false,
-		Args:       nil,
-	}
-}
-
-type QueueConfig struct {
-	Name       string
-	Durable    bool
-	AutoDelete bool
-	Exclusive  bool
-	NoWait     bool
-	IfUnused   bool
-	IfEmpty    bool
-	Args       amqp.Table
-}
-
-func DefaultQueueConfig() *QueueConfig {
-	return &QueueConfig{
-		Name:       "",
-		Durable:    false,
-		AutoDelete: false,
-		Exclusive:  true,
-		NoWait:     false,
-		IfUnused:   false,
-		IfEmpty:    false,
-		Args:       nil,
-	}
-}
-
-type QueueBindConfig struct {
-	Key    string
-	NoWait bool
-	Args   amqp.Table
-}
-
-func DefaultQueueBindConfig() *QueueBindConfig {
-	return &QueueBindConfig{
-		Key:    "",
-		NoWait: false,
-		Args:   nil,
-	}
-}
-
-type ConsumeConfig struct {
-	Consumer  string
-	AutoAck   bool
-	Exclusive bool
-	NoLocal   bool
-	NoWait    bool
-	Args      amqp.Table
-}
-
-func DefaultConsumeConfig() *ConsumeConfig {
-	return &ConsumeConfig{
-		Consumer:  "",
-		AutoAck:   false,
-		Exclusive: false,
-		NoLocal:   false,
-		NoWait:    false,
-		Args:      nil,
-	}
-}
-
-type PublishConfig struct {
-	Key       string
-	Mandatory bool
-	Immediate bool
-}
-
-func DefaultPublishConfig() *PublishConfig {
-	return &PublishConfig{
-		Key:       "",
-		Immediate: false,
-		Mandatory: false,
-	}
-}
-
 type Observer interface {
 	Sub(service string,
 		reply interface{},
@@ -134,7 +41,7 @@ type Observer interface {
 		queueConfig *QueueConfig,
 		bindConfig *QueueBindConfig,
 		consumeConfig *ConsumeConfig,
-	) (<-chan Event, error)
+	) (eventChan <-chan Event, errorChan <-chan error, doneChan chan<- bool)
 	Pub(service string,
 		data interface{},
 		config *ExchangeConfig,
@@ -158,35 +65,42 @@ func (o *observer) worker(exchangeName string,
 	queueName string,
 	deliveryCh <-chan amqp.Delivery,
 	outCh chan<- Event,
+	errorCh chan<- error,
 	reply interface{},
 	key string,
 	ifUnused bool,
 	ifEmpty bool,
 	noWait bool,
 	args amqp.Table,
+	done chan bool,
 ) {
 	defer func() {
 		o.ch.QueueUnbind(queueName, key, exchangeName, args)
 		o.ch.QueueDelete(queueName, ifUnused, ifEmpty, noWait)
-		close(outCh)
 	}()
-	for d := range deliveryCh {
-		if d.ContentType != o.codec.ContentType() {
-			continue
-		}
+	for {
+		select {
+		case <-done:
+			close(done)
+			return
+		case d := <-deliveryCh:
+			if d.ContentType != o.codec.ContentType() {
+				continue
+			}
 
-		data := reflect.New(reflect.TypeOf(reply))
-		req := o.codec.NewRequest(
-			&request{d: d},
-		)
-		err := req.ReadRequest(data.Interface())
+			data := reflect.New(reflect.TypeOf(reply))
+			req := o.codec.NewRequest(
+				&request{d: d},
+			)
+			err := req.ReadRequest(data.Interface())
 
-		if err != nil {
-			log.Println(err)
-		}
-		outCh <- Event{
-			d:    d,
-			Data: data.Interface(),
+			if err != nil {
+				errorCh <- err
+			}
+			outCh <- Event{
+				d:    d,
+				Data: data.Interface(),
+			}
 		}
 	}
 }
@@ -197,7 +111,7 @@ func (o *observer) Sub(exchangeName string,
 	queueCfg *QueueConfig,
 	queueBindCfg *QueueBindConfig,
 	consumeCfg *ConsumeConfig,
-) (<-chan Event, error) {
+) (outCh <-chan Event, errCh <-chan error, doneCh chan<- bool) {
 	if exchangeCfg == nil {
 		exchangeCfg = DefaultExchangeConfig()
 	}
@@ -210,6 +124,12 @@ func (o *observer) Sub(exchangeName string,
 	if consumeCfg == nil {
 		consumeCfg = DefaultConsumeConfig()
 	}
+	outC := make(chan Event)
+	outCh = outC
+	errC := make(chan error)
+	errCh = errC
+	doneC := make(chan bool, 1)
+	doneCh = doneC
 
 	err := o.ch.ExchangeDeclare(exchangeName,
 		exchangeCfg.Kind,
@@ -220,7 +140,8 @@ func (o *observer) Sub(exchangeName string,
 		exchangeCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("exchange declare err: %v", err)
+		errC <- fmt.Errorf("exchange declare err: %v", err)
+		return
 	}
 	q, err := o.ch.QueueDeclare(queueCfg.Name,
 		queueCfg.Durable,
@@ -230,7 +151,8 @@ func (o *observer) Sub(exchangeName string,
 		queueCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("queue declare err: %v", err)
+		errC <- fmt.Errorf("queue declare err: %v", err)
+		return
 	}
 	err = o.ch.QueueBind(q.Name,
 		queueBindCfg.Key,
@@ -239,7 +161,8 @@ func (o *observer) Sub(exchangeName string,
 		queueBindCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("queue bind err: %v", err)
+		errC <- fmt.Errorf("queue bind err: %v", err)
+		return
 	}
 	deliveryCh, err := o.ch.Consume(q.Name,
 		consumeCfg.Consumer,
@@ -250,23 +173,26 @@ func (o *observer) Sub(exchangeName string,
 		consumeCfg.Args,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("consume err: %v", err)
+		errC <- fmt.Errorf("consume err: %v", err)
+		return
 	}
-	outCh := make(chan Event)
 
-	go o.worker(exchangeName,
+	go o.worker(
+		exchangeName,
 		q.Name,
 		deliveryCh,
-		outCh,
+		outC,
+		errC,
 		reflect.Indirect(reflect.ValueOf(reply)).Interface(),
 		queueBindCfg.Key,
 		queueCfg.IfUnused,
 		queueCfg.IfEmpty,
 		queueCfg.NoWait,
 		queueBindCfg.Args,
+		doneC,
 	)
 
-	return outCh, nil
+	return
 }
 
 func (o *observer) Pub(exchangeName string,
