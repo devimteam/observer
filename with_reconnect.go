@@ -20,7 +20,7 @@ type observerWithReconnect struct {
 
 	reconnectParams *ReconnectParams
 	sleeper         *sleeper
-	isConnected     MutexWithBool
+	reconnectMx     sync.Mutex
 }
 
 type ReconnectParams struct {
@@ -36,39 +36,20 @@ func WithReconnect(codec Codec, url string, config amqp.Config, reconnectParams 
 		sleeper:         NewSleeper(reconnectParams.DelayCap, reconnectParams.DelayBase),
 		reconnectParams: &reconnectParams,
 	}
-	o.isConnected.Lock()
 	errCh := make(chan error)
 	const SenderBuffer = 5
 	s := newChanErrorSenderWithCap(SenderBuffer, errCh)
+	o.reconnectMx.Lock()
 	go func() {
 		for {
-			if !o.isConnected.IsLocked() {
-				o.isConnected.Lock()
-			}
-
-			connection, err := amqp.DialConfig(url, config)
-			if err != nil {
-				s.Send(fmt.Errorf("dial: %v", err))
-				o.sleeper.Inc()
-				o.sleeper.Sleep()
-				continue
-			}
-			newChannel, err := connection.Channel()
-			if err != nil {
-				s.Send(fmt.Errorf("channel: %v", err))
-				o.sleeper.Inc()
-				o.sleeper.Sleep()
-				continue
-			}
+			connection, newChannel := o.infiniteReconnect(url, config, s)
 			o.sleeper.Drop()
+			o.updateCurrentChannel(newChannel)
+			o.reconnectMx.Unlock()
 
-			o.channelMx.Lock()
-			o.currentChannel = newChannel
-			o.channelMx.Unlock()
-
-			o.isConnected.Unlock()
 			notifyClose := make(chan *amqp.Error)
-			s.Send(fmt.Errorf("notify: %v", <-connection.NotifyClose(notifyClose)))
+			s.Send(fmt.Errorf("connection closed: %v", <-connection.NotifyClose(notifyClose)))
+			o.reconnectMx.Lock()
 		}
 	}()
 	return &o, errCh
@@ -89,17 +70,13 @@ func (o *observerWithReconnect) Sub(
 	errCh := make(chan error)
 	doneCh := make(chan bool, 1)
 	errSender := newChanErrorSenderWithCap(o.reconnectParams.DelayCap, errCh)
+	retlyType := reflect.Indirect(reflect.ValueOf(reply)).Interface()
 
 	go o.listener(
 		exchangeName,
-		outCh,
-		doneCh,
-		errSender,
-		reflect.Indirect(reflect.ValueOf(reply)).Interface(),
-		exchangeCfg,
-		queueCfg,
-		queueBindCfg,
-		consumeCfg,
+		outCh, doneCh, errSender,
+		retlyType,
+		exchangeCfg, queueCfg, queueBindCfg, consumeCfg,
 	)
 
 	return outCh, errCh, doneCh
@@ -140,6 +117,32 @@ func (o *observerWithReconnect) Pub(
 	return nil
 }
 
+func (o *observerWithReconnect) infiniteReconnect(url string, config amqp.Config, errorSender *chanErrorSenderWithCap) (connection *amqp.Connection, newChannel *amqp.Channel) {
+	var err error
+	for {
+		o.sleeper.Sleep()
+		o.sleeper.Inc()
+		connection, err = amqp.DialConfig(url, config)
+		if err != nil {
+			errorSender.Send(fmt.Errorf("dial: %v", err))
+			continue
+		}
+		newChannel, err = connection.Channel()
+		if err != nil {
+			errorSender.Send(fmt.Errorf("channel: %v", err))
+			continue
+		}
+		break // successfully connected
+	}
+	return connection, newChannel
+}
+
+func (o *observerWithReconnect) updateCurrentChannel(ch *amqp.Channel) {
+	o.channelMx.Lock()
+	o.currentChannel = ch
+	o.channelMx.Unlock()
+}
+
 func (o *observerWithReconnect) listener(
 	exchangeName string,
 	outCh chan<- Event,
@@ -166,21 +169,17 @@ func (o *observerWithReconnect) listener(
 			close(doneCh)
 			return
 		default:
+			o.waitForConnection()
 			queueName, err = o.declareQueue(exchangeName, exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
 			if err != nil {
 				errorSender.Send(err)
-				o.sleeper.Inc()
-				o.sleeper.Sleep()
 				continue
 			}
 			deliveryCh, err := channelConsume(o.currentChannel, queueName, consumeCfg)
 			if err != nil {
 				errorSender.Send(fmt.Errorf("consume: %v", err))
-				o.sleeper.Inc()
-				o.sleeper.Sleep()
 				continue
 			}
-			o.sleeper.Drop()
 			for d := range deliveryCh {
 				ev, err := o.handleEvent(d, reply)
 				if err != nil {
@@ -236,9 +235,6 @@ func (o *observerWithReconnect) handleEvent(d amqp.Delivery, reply interface{}) 
 }
 
 func (o *observerWithReconnect) waitForConnection() {
-	if o.isConnected.IsLocked() {
-		o.isConnected.Lock()
-		o.isConnected.Unlock()
-	}
-	return
+	o.reconnectMx.Lock()
+	o.reconnectMx.Unlock()
 }

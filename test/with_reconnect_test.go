@@ -172,12 +172,8 @@ func TestWithReconnectManyObservers(t *testing.T) {
 	subscriberB := newTestObserver("sub B: reconnect:", tt)
 	publisherA := newTestObserver("pub A: reconnect:", tt)
 	publisherB := newTestObserver("pub B: reconnect:", tt)
-	go func() {
-		subFunc("sub A:", subscriberA, nil)
-	}()
-	go func() {
-		subFunc("sub B:", subscriberB, nil)
-	}()
+	go subFunc("sub A:", subscriberA, nil)
+	go subFunc("sub B:", subscriberB, nil)
 	time.Sleep(time.Second * 1)
 	var wg sync.WaitGroup
 	wg.Add(2)

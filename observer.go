@@ -72,7 +72,7 @@ func (o *observer) worker(exchangeName string,
 	ifEmpty bool,
 	noWait bool,
 	args amqp.Table,
-	done <-chan bool,
+	done chan bool,
 ) {
 	defer func() {
 		o.ch.QueueUnbind(queueName, key, exchangeName, args)
@@ -81,6 +81,7 @@ func (o *observer) worker(exchangeName string,
 	for {
 		select {
 		case <-done:
+			close(done)
 			return
 		case d := <-deliveryCh:
 			if d.ContentType != o.codec.ContentType() {
