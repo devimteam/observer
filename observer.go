@@ -43,7 +43,7 @@ func (e Event) Reject(requeue bool) error {
 }
 
 func (e Event) Nack(multiple, requeue bool) error {
-	return e.Nack(multiple, requeue)
+	return e.d.Nack(multiple, requeue)
 }
 
 type Observer interface {
