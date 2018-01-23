@@ -31,7 +31,19 @@ type Event struct {
 }
 
 func (e Event) Commit() {
-	e.d.Ack(false)
+	e.Ack(false)
+}
+
+func (e Event) Ack(multiple bool) error {
+	return e.d.Ack(multiple)
+}
+
+func (e Event) Reject(requeue bool) error {
+	return e.d.Reject(requeue)
+}
+
+func (e Event) Nack(multiple, requeue bool) error {
+	return e.Nack(multiple, requeue)
 }
 
 type Observer interface {
