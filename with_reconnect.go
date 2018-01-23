@@ -183,6 +183,10 @@ func (o *observerWithReconnect) listener(
 			for d := range deliveryCh {
 				ev, err := o.handleEvent(d, reply)
 				if err != nil {
+					e := d.Nack(false, true)
+					if e != nil {
+						errorSender.Send(fmt.Errorf("nack: %v", e))
+					}
 					errorSender.Send(fmt.Errorf("handle event: %v", err))
 					continue
 				}
