@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
-	"time"
 
 	"github.com/streadway/amqp"
 )
@@ -18,41 +17,44 @@ type observerWithReconnect struct {
 	channelMx      sync.Mutex
 	currentChannel *amqp.Channel
 
-	reconnectParams *ReconnectParams
 	sleeper         *sleeper
-	reconnectMx     sync.Mutex
+	connectionState connectionState
+	options         options
 }
 
-type ReconnectParams struct {
-	DelayBase time.Duration
-	DelayCap  int
-}
-
-func WithReconnect(codec Codec, url string, config amqp.Config, reconnectParams ReconnectParams) (Observer, <-chan error) {
+func WithReconnect(codec Codec, url string, config amqp.Config, opts ...Option) (Observer, <-chan error) {
+	ops := options{}
+	for _, op := range opts {
+		op(&ops)
+	}
 	o := observerWithReconnect{
-		codec:           codec,
-		config:          config,
-		url:             url,
-		sleeper:         NewSleeper(reconnectParams.DelayCap, reconnectParams.DelayBase),
-		reconnectParams: &reconnectParams,
+		codec:   codec,
+		config:  config,
+		url:     url,
+		sleeper: NewSleeper(ops.timeoutCap, ops.timeoutBase),
+		options: ops,
 	}
 	errCh := make(chan error)
+	o.reconnectLoop(errCh)
+	return &o, errCh
+}
+
+func (o *observerWithReconnect) reconnectLoop(errCh chan<- error) {
 	const SenderBuffer = 5
 	s := newChanErrorSenderWithCap(SenderBuffer, errCh)
-	o.reconnectMx.Lock()
+	o.connectionState.Disconnected()
 	go func() {
 		for {
-			connection, newChannel := o.infiniteReconnect(url, config, s)
+			connection, newChannel := o.infiniteReconnect(o.url, o.config, s)
 			o.sleeper.Drop()
 			o.updateCurrentChannel(newChannel)
-			o.reconnectMx.Unlock()
+			o.connectionState.Connected()
 
 			notifyClose := make(chan *amqp.Error)
 			s.Send(fmt.Errorf("connection closed: %v", <-connection.NotifyClose(notifyClose)))
-			o.reconnectMx.Lock()
+			o.connectionState.Disconnected()
 		}
 	}()
-	return &o, errCh
 }
 
 func (o *observerWithReconnect) Sub(
@@ -64,12 +66,14 @@ func (o *observerWithReconnect) Sub(
 	consumeCfg *ConsumeConfig,
 ) (<-chan Event, <-chan error, chan<- bool) {
 	exchangeCfg, queueCfg, queueBindCfg, consumeCfg = initSubscribeConfigs(exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
-	o.waitForConnection()
+	if o.options.waitConnection {
+		o.connectionState.Wait()
+	}
 
 	outCh := make(chan Event)
 	errCh := make(chan error)
 	doneCh := make(chan bool, 1)
-	errSender := newChanErrorSenderWithCap(o.reconnectParams.DelayCap, errCh)
+	errSender := newChanErrorSenderWithCap(o.options.timeoutCap, errCh)
 	retlyType := reflect.Indirect(reflect.ValueOf(reply)).Interface()
 
 	go o.listener(
@@ -94,7 +98,9 @@ func (o *observerWithReconnect) Pub(
 	if publishCfg == nil {
 		publishCfg = DefaultPublishConfig()
 	}
-	o.waitForConnection()
+	if o.options.waitConnection {
+		o.connectionState.Wait()
+	}
 	err := channelExchangeDeclare(o.currentChannel, exchangeName, exchangeCfg)
 	if err != nil {
 		return fmt.Errorf("exchange declare err: %v", err)
@@ -105,7 +111,9 @@ func (o *observerWithReconnect) Pub(
 	if err != nil {
 		return err
 	}
-	o.waitForConnection()
+	if o.options.waitConnection {
+		o.connectionState.Wait()
+	}
 	err = channelPublish(o.currentChannel, exchangeName, publishCfg,
 		amqp.Publishing{
 			ContentType: o.codec.ContentType(),
@@ -169,11 +177,16 @@ func (o *observerWithReconnect) listener(
 			close(doneCh)
 			return
 		default:
-			o.waitForConnection()
+			if o.options.waitConnection {
+				o.connectionState.Wait()
+			}
 			queueName, err = o.declareQueue(exchangeName, exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
 			if err != nil {
 				errorSender.Send(err)
 				continue
+			}
+			if o.options.waitConnection {
+				o.connectionState.Wait()
 			}
 			deliveryCh, err := channelConsume(o.currentChannel, queueName, consumeCfg)
 			if err != nil {
@@ -238,7 +251,26 @@ func (o *observerWithReconnect) handleEvent(d amqp.Delivery, reply interface{}) 
 	return Event{d: d, Data: data.Interface()}, nil
 }
 
-func (o *observerWithReconnect) waitForConnection() {
-	o.reconnectMx.Lock()
-	o.reconnectMx.Unlock()
+type connectionState struct {
+	mx     sync.Mutex
+	locked bool
+}
+
+func (s *connectionState) Connected() {
+	s.mx.Unlock()
+	s.locked = true
+}
+
+func (s *connectionState) Disconnected() {
+	s.mx.Lock()
+	s.locked = true
+}
+
+func (s *connectionState) IsConnected() bool {
+	return s.locked
+}
+
+func (s *connectionState) Wait() {
+	s.mx.Lock()
+	s.mx.Unlock()
 }

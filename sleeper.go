@@ -30,6 +30,10 @@ func (s *sleeper) Drop() {
 	s.currentCap = 0
 }
 
+func (s *sleeper) Value() int {
+	return s.currentCap
+}
+
 // Returns 2^x
 // If x is zero, returns 0
 func expOf2(x uint) uint {
