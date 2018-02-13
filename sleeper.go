@@ -30,7 +30,7 @@ func (s *sleeper) Drop() {
 	s.currentCap = 0
 }
 
-func (s *sleeper) Value() int {
+func (s *sleeper) Value() uint {
 	return s.currentCap
 }
 
