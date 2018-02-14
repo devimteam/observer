@@ -13,10 +13,10 @@ import (
 )
 
 type args struct {
-	codec           observer.Codec
-	url             string
-	config          amqp.Config
-	reconnectParams observer.ReconnectParams
+	codec   observer.Codec
+	url     string
+	config  amqp.Config
+	options []observer.Option
 }
 
 type X struct {
@@ -32,9 +32,9 @@ func TestWithReconnect(t *testing.T) {
 				&amqp.PlainAuth{Username: "guest", Password: "guest"},
 			},
 		},
-		reconnectParams: observer.ReconnectParams{
-			DelayBase: time.Second,
-			DelayCap:  5,
+		options: []observer.Option{
+			observer.WaitConnection(true),
+			observer.TimeoutOption(time.Second, 10),
 		},
 	}
 	observer := newTestObserver("reconnect:", tt)
@@ -42,10 +42,7 @@ func TestWithReconnect(t *testing.T) {
 		Text string
 	}
 	go func() {
-		events, errCh1, err := observer.Sub("test", &X{}, nil, nil, nil, nil)
-		if err != nil {
-			t.Fatal("subscriber: ", err)
-		}
+		events, errCh1, _ := observer.Sub("test", &X{}, nil, nil, nil, nil)
 		go func() {
 			for {
 				fmt.Println("subscriber: ", <-errCh1)
@@ -78,9 +75,9 @@ func TestWithReconnectDifObservers(t *testing.T) {
 				&amqp.PlainAuth{Username: "guest", Password: "guest"},
 			},
 		},
-		reconnectParams: observer.ReconnectParams{
-			DelayBase: time.Second,
-			DelayCap:  5,
+		options: []observer.Option{
+			observer.WaitConnection(true),
+			observer.TimeoutOption(time.Second, 10),
 		},
 	}
 	subscriber := newTestObserver("subscriber: reconnect:", tt)
@@ -117,7 +114,7 @@ func TestWithReconnectDifObservers(t *testing.T) {
 }
 
 func newTestObserver(errorPrefix string, tt args) observer.Observer {
-	obs, errCh := observer.WithReconnect(tt.codec, tt.url, tt.config, tt.reconnectParams)
+	obs, errCh := observer.WithReconnect(tt.codec, tt.url, tt.config, tt.options...)
 	go func() {
 		for {
 			fmt.Println(errorPrefix, <-errCh)
@@ -163,9 +160,9 @@ func TestWithReconnectManyObservers(t *testing.T) {
 				&amqp.PlainAuth{Username: "guest", Password: "guest"},
 			},
 		},
-		reconnectParams: observer.ReconnectParams{
-			DelayBase: time.Second,
-			DelayCap:  5,
+		options: []observer.Option{
+			observer.WaitConnection(true),
+			observer.TimeoutOption(time.Second, 10),
 		},
 	}
 	subscriberA := newTestObserver("sub A: reconnect:", tt)

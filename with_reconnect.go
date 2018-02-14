@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"sync"
 
+	"time"
+
 	"github.com/streadway/amqp"
 )
 
@@ -23,7 +25,7 @@ type observerWithReconnect struct {
 }
 
 func WithReconnect(codec Codec, url string, config amqp.Config, opts ...Option) (Observer, <-chan error) {
-	ops := options{}
+	ops := defaultOptions()
 	for _, op := range opts {
 		op(&ops)
 	}
@@ -66,20 +68,23 @@ func (o *observerWithReconnect) Sub(
 	consumeCfg *ConsumeConfig,
 ) (<-chan Event, <-chan error, chan<- bool) {
 	exchangeCfg, queueCfg, queueBindCfg, consumeCfg = initSubscribeConfigs(exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
+	errCh := make(chan error, o.options.subErrorChanBuffer)
 	if o.options.waitConnection {
-		o.connectionState.Wait()
+		err := o.connectionState.Wait(defaultWaitDeadline)
+		if err != nil {
+			errCh <- err
+		}
 	}
 
-	outCh := make(chan Event)
-	errCh := make(chan error)
+	outCh := make(chan Event, o.options.subEventChanBuffer)
 	doneCh := make(chan bool, 1)
 	errSender := newChanErrorSenderWithCap(o.options.timeoutCap, errCh)
-	retlyType := reflect.Indirect(reflect.ValueOf(reply)).Interface()
+	replyType := reflect.Indirect(reflect.ValueOf(reply)).Interface()
 
 	go o.listener(
 		exchangeName,
 		outCh, doneCh, errSender,
-		retlyType,
+		replyType,
 		exchangeCfg, queueCfg, queueBindCfg, consumeCfg,
 	)
 
@@ -99,7 +104,10 @@ func (o *observerWithReconnect) Pub(
 		publishCfg = DefaultPublishConfig()
 	}
 	if o.options.waitConnection {
-		o.connectionState.Wait()
+		err := o.connectionState.Wait(o.options.waitConnectionDeadline)
+		if err != nil {
+			return err
+		}
 	}
 	err := channelExchangeDeclare(o.currentChannel, exchangeName, exchangeCfg)
 	if err != nil {
@@ -110,9 +118,6 @@ func (o *observerWithReconnect) Pub(
 	dataBytes, err := resp.Body()
 	if err != nil {
 		return err
-	}
-	if o.options.waitConnection {
-		o.connectionState.Wait()
 	}
 	err = channelPublish(o.currentChannel, exchangeName, publishCfg,
 		amqp.Publishing{
@@ -178,15 +183,16 @@ func (o *observerWithReconnect) listener(
 			return
 		default:
 			if o.options.waitConnection {
-				o.connectionState.Wait()
+				err := o.connectionState.Wait(o.options.waitConnectionDeadline)
+				if err != nil {
+					errorSender.Send(err)
+					continue
+				}
 			}
 			queueName, err = o.declareQueue(exchangeName, exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
 			if err != nil {
 				errorSender.Send(err)
 				continue
-			}
-			if o.options.waitConnection {
-				o.connectionState.Wait()
 			}
 			deliveryCh, err := channelConsume(o.currentChannel, queueName, consumeCfg)
 			if err != nil {
@@ -270,7 +276,19 @@ func (s *connectionState) IsConnected() bool {
 	return s.locked
 }
 
-func (s *connectionState) Wait() {
-	s.mx.Lock()
-	s.mx.Unlock()
+var TimeoutError = errors.New("reached the deadline")
+
+func (s *connectionState) Wait(deadline time.Duration) error {
+	r := make(chan struct{})
+	go func() {
+		s.mx.Lock()
+		s.mx.Unlock()
+		r <- struct{}{}
+	}()
+	select {
+	case <-r:
+		return nil
+	case <-time.After(deadline):
+		return TimeoutError
+	}
 }
