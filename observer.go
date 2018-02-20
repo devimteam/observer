@@ -7,24 +7,6 @@ import (
 	"github.com/streadway/amqp"
 )
 
-// Codec creates a CodecRequest to process each request.
-type Codec interface {
-	NewRequest(req Request) CodecRequest
-	NewResponse(data interface{}) CodecResponse
-	ContentType() string
-}
-
-// CodecRequest decodes a request and encodes a response using a specific
-// serialization scheme.
-type CodecRequest interface {
-	// Reads the request filling the RPC method args.
-	ReadRequest(i interface{}) error
-}
-
-type CodecResponse interface {
-	Body() ([]byte, error)
-}
-
 type Event struct {
 	d    amqp.Delivery
 	Data interface{}
@@ -44,21 +26,6 @@ func (e Event) Reject(requeue bool) error {
 
 func (e Event) Nack(multiple, requeue bool) error {
 	return e.d.Nack(multiple, requeue)
-}
-
-type Observer interface {
-	Sub(service string,
-		reply interface{},
-		config *ExchangeConfig,
-		queueConfig *QueueConfig,
-		bindConfig *QueueBindConfig,
-		consumeConfig *ConsumeConfig,
-	) (eventChan <-chan Event, errorChan <-chan error, doneChan chan<- bool)
-	Pub(service string,
-		data interface{},
-		config *ExchangeConfig,
-		publishConfig *PublishConfig,
-	) error
 }
 
 type observer struct {
