@@ -2,25 +2,28 @@ package observer
 
 import (
 	"math/rand"
+	"net/http"
 	"sync"
 	"time"
+
+	"github.com/streadway/amqp"
 )
 
-type chanErrorSenderWithCap struct {
+type reporter struct {
 	errChannel chan<- error
 
 	cap        int
 	currentCap int
 }
 
-func newChanErrorSenderWithCap(cap int, ch chan<- error) *chanErrorSenderWithCap {
-	return &chanErrorSenderWithCap{
+func newReporter(cap int, ch chan<- error) *reporter {
+	return &reporter{
 		cap:        cap,
 		errChannel: ch,
 	}
 }
 
-func (s *chanErrorSenderWithCap) Send(err error) {
+func (s *reporter) Report(err error) {
 	if s.currentCap < s.cap {
 		s.currentCap++
 		go func() {
@@ -87,4 +90,15 @@ func (c *MutexWithBool) Unlock() {
 
 func (c *MutexWithBool) IsLocked() bool {
 	return c.isLocked
+}
+
+func NewSimpleMessage(codec Codec, data interface{}) (msg amqp.Publishing, err error) {
+	msg.Body, err = codec.NewResponse(data).Body()
+	if err != nil {
+		return
+	}
+	msg.ContentType = codec.ContentType() // todo: should be fmt.Sprintf("%T", data)
+	msg.Timestamp = time.Now()
+	msg.Type = http.DetectContentType(msg.Body)
+	return
 }

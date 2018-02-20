@@ -9,6 +9,7 @@ type options struct {
 	timeoutCap             int
 	subErrorChanBuffer     int
 	subEventChanBuffer     int
+	pubUseOneChannel       bool
 }
 
 const (
