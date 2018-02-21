@@ -15,22 +15,16 @@ type Observer interface {
 	) error
 }
 
-// Codec creates a CodecRequest to process each request.
+// Codec is an interface that encodes message on pub and decodes it on sub.
 type Codec interface {
+	Encoder
+	Decoder
+}
+
+type Encoder interface {
 	Encode(interface{}) ([]byte, error)
-	Decode(interface{}) error
-	NewRequest(req Request) CodecRequest
-	NewResponse(data interface{}) CodecResponse
-	ContentType() string
 }
 
-// CodecRequest decodes a request and encodes a response using a specific
-// serialization scheme.
-type CodecRequest interface {
-	// Reads the request filling the RPC method args.
-	ReadRequest(i interface{}) error
-}
-
-type CodecResponse interface {
-	Body() ([]byte, error)
+type Decoder interface {
+	Decode([]byte, interface{}) error
 }
