@@ -35,6 +35,7 @@ func TestWithReconnect(t *testing.T) {
 		options: []observer.Option{
 			observer.WaitConnection(true),
 			observer.TimeoutOption(time.Second, 10),
+			observer.DebugLogger(),
 		},
 	}
 	observer := newTestObserver("reconnect:", tt)
@@ -137,7 +138,7 @@ func subFunc(prefix string, obs observer.Observer, quecfg *observer.QueueConfig)
 	done <- true
 }
 
-func pubFunc(prefix string, from, to int, obs observer.Observer) {
+func pubFunc(prefix string, from, to int, obs observer.Observer, timeout time.Duration) {
 	fmt.Println(prefix, "start pubing")
 	for s := from; s < to; s++ {
 		err := obs.Pub("test_wtf", X{s}, nil, nil)
@@ -146,7 +147,7 @@ func pubFunc(prefix string, from, to int, obs observer.Observer) {
 			s--
 		}
 		fmt.Println(prefix, s)
-		time.Sleep(time.Second * 3)
+		time.Sleep(timeout)
 	}
 	fmt.Println(prefix, "done pubing")
 }
@@ -175,11 +176,54 @@ func TestWithReconnectManyObservers(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		pubFunc("pub A:", 0, 10, publisherA)
+		pubFunc("pub A:", 0, 10, publisherA, time.Second*3)
 		wg.Done()
 	}()
 	go func() {
-		pubFunc("pub B:", 50, 60, publisherB)
+		pubFunc("pub B:", 50, 60, publisherB, time.Second*3)
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+func TestWithReconnectHighLoad(t *testing.T) {
+	tt := args{
+		codec: json.NewCodec(),
+		url:   fmt.Sprintf("amqp://%s:%d", "localhost", 5672),
+		config: amqp.Config{
+			SASL: []amqp.Authentication{
+				&amqp.PlainAuth{Username: "guest", Password: "guest"},
+			},
+		},
+		options: []observer.Option{
+			observer.WaitConnection(true),
+			observer.TimeoutOption(time.Second, 10),
+		},
+	}
+	subscriber := newTestObserver("sub: reconnect:", tt)
+	publisher := newTestObserver("pub: reconnect:", tt)
+	queueCfg := observer.DefaultQueueConfig()
+	queueCfg.Name = "testLoad"
+	go subFunc("sub A:", subscriber, queueCfg)
+	//go subFunc("sub B:", subscriber, queueCfg)
+	//go subFunc("sub C:", subscriber, queueCfg)
+	time.Sleep(time.Second * 1)
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() {
+		pubFunc("pub A:", 0, 1000, publisher, time.Millisecond*250)
+		wg.Done()
+	}()
+	go func() {
+		pubFunc("pub B:", 1000, 2000, publisher, time.Millisecond*250)
+		wg.Done()
+	}()
+	go func() {
+		pubFunc("pub C:", 2000, 3000, publisher, time.Millisecond*250)
+		wg.Done()
+	}()
+	go func() {
+		pubFunc("pub D:", 3000, 4000, publisher, time.Millisecond*250)
 		wg.Done()
 	}()
 	wg.Wait()

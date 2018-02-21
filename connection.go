@@ -23,29 +23,30 @@ type connectionWrapper struct {
 
 func newConnectionWrapper(url string, config amqp.Config, sleeper *sleeper) *connectionWrapper {
 	cw := connectionWrapper{url: url, config: config, locked: true, sleeper: sleeper}
-	cw.mx.Lock()
 	return &cw
 }
 
-func (s *connectionWrapper) restore(reporter *reporter) {
+func (s *connectionWrapper) restore(logger *logger) {
 	s.Disconnected()
+	logger.Log(2, fmt.Errorf("disconnected from %s", s.url))
 	for {
 		s.sleeper.Sleep()
 		s.sleeper.Inc()
 		connection, err := amqp.DialConfig(s.url, s.config)
 		if err != nil {
-			reporter.Report(fmt.Errorf("dial: %v", err))
+			logger.Log(0, fmt.Errorf("dial: %v", err))
 			continue
 		}
 		s.conn = connection
 		go func() {
-			reporter.Report(fmt.Errorf("connection closed: %v", <-connection.NotifyClose(make(chan *amqp.Error))))
+			logger.Log(0, fmt.Errorf("connection closed: %v", <-connection.NotifyClose(make(chan *amqp.Error))))
 			s.notifier.notify()
-			s.restore(reporter)
+			s.restore(logger)
 		}()
 		break
 	}
 	defer s.Connected()
+	defer logger.Log(2, fmt.Errorf("connected to %s", s.url))
 }
 
 func (s *connectionWrapper) NotifyClose() <-chan signal {

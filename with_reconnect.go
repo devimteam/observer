@@ -34,7 +34,7 @@ func WithReconnect(codec Codec, url string, config amqp.Config, opts ...Option) 
 
 func (o *observerWithReconnect) reconnectLoop(errCh chan<- error) {
 	const SenderBuffer = 5
-	s := newReporter(SenderBuffer, errCh)
+	s := newLogger(o.options.loggerLevel, SenderBuffer, errCh)
 	o.connection.restore(s)
 	return
 }
@@ -89,7 +89,7 @@ func (o *observerWithReconnect) Sub(
 	errCh := make(chan error, o.options.subErrorChanBuffer)
 	outCh := make(chan Event, o.options.subEventChanBuffer)
 	doneCh := make(chan bool, 1)
-	reporter := newReporter(o.options.timeoutCap, errCh)
+	reporter := newLogger(o.options.loggerLevel, o.options.timeoutCap, errCh)
 	replyType := reflect.Indirect(reflect.ValueOf(reply)).Interface()
 
 	go o.listener(
@@ -106,7 +106,7 @@ func (o *observerWithReconnect) listener(
 	exchangeName string,
 	outCh chan<- Event,
 	doneCh chan bool,
-	reporter *reporter,
+	logger *logger,
 	reply interface{},
 	exchangeCfg *ExchangeConfig,
 	queueCfg *QueueConfig,
@@ -117,26 +117,38 @@ func (o *observerWithReconnect) listener(
 		if o.options.waitConnection {
 			err := o.connection.Wait(o.options.waitConnectionDeadline)
 			if err != nil {
-				reporter.Report(err)
+				logger.Log(0, err)
 				continue
 			}
 		}
 		channel, err := o.connection.conn.Channel()
 		if err != nil {
-			reporter.Report(err)
+			logger.Log(0, err)
 			continue
 		}
 		notifier := channel.NotifyClose(make(chan *amqp.Error))
-		deliveryCh, queueName, err := prepateDeliveryChan(channel, exchangeName, exchangeCfg, queueCfg, queueBindCfg, consumeCfg)
+		deliveryCh, queueName, err := prepareDeliveryChan(channel, exchangeName, exchangeCfg, queueCfg, queueBindCfg, consumeCfg, logger)
 		if err != nil {
-			reporter.Report(err)
+			logger.Log(0, err)
 			continue
 		}
 
 	DeliveryLoop:
 		for {
 			select {
+			case d := <-deliveryCh:
+				ev, err := o.handleEvent(d, reply)
+				if err != nil {
+					e := d.Nack(false, true)
+					if e != nil {
+						logger.Log(1, fmt.Errorf("nack: %v", e))
+					}
+					logger.Log(1, fmt.Errorf("handle event: %v", err))
+					continue
+				}
+				outCh <- ev
 			case <-notifier:
+				logger.Log(0, fmt.Errorf("delivery channel was closed"))
 				break DeliveryLoop
 			case <-doneCh:
 				close(outCh)
@@ -146,44 +158,39 @@ func (o *observerWithReconnect) listener(
 					channel.QueueDelete(queueName, queueCfg.IfUnused, queueCfg.IfEmpty, queueCfg.NoWait)
 					channel.Close()
 				}
+				logger.Log(1, fmt.Errorf("done"))
 				return
-			case d := <-deliveryCh:
-				ev, err := o.handleEvent(d, reply)
-				if err != nil {
-					e := d.Nack(false, true)
-					if e != nil {
-						reporter.Report(fmt.Errorf("nack: %v", e))
-					}
-					reporter.Report(fmt.Errorf("handle event: %v", err))
-					continue
-				}
-				outCh <- ev
 			}
-			reporter.Report(fmt.Errorf("delivery channel was closed"))
 		}
 	}
 }
 
-func prepateDeliveryChan(
+func prepareDeliveryChan(
 	channel *amqp.Channel,
 	exchangeName string,
 	exchangeCfg *ExchangeConfig,
 	queueCfg *QueueConfig,
 	queueBindCfg *QueueBindConfig,
 	consumeCfg *ConsumeConfig,
+	reporter *logger,
 ) (<-chan amqp.Delivery, string, error) {
+	reporter.Log(3, fmt.Errorf("prepare delivery chan for exchange %s", exchangeName))
+	reporter.Log(3, fmt.Errorf("exchange(%s) declare", exchangeName))
 	err := channelExchangeDeclare(channel, exchangeName, exchangeCfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("exchange declare err: %v", err)
 	}
+	reporter.Log(3, fmt.Errorf("queue(%s) declare", queueCfg.Name))
 	q, err := channelQueueDeclare(channel, queueCfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("queue declare err: %v", err)
 	}
+	reporter.Log(3, fmt.Errorf("bind queue(%s) to exchange(%s)", q.Name, exchangeName))
 	err = channelQueueBind(channel, q.Name, exchangeName, queueBindCfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("queue bind err: %v", err)
 	}
+	reporter.Log(3, fmt.Errorf("consume from queue(%s)", q.Name))
 	ch, err := channelConsume(channel, q.Name, consumeCfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("channel consume err: %v", err)

@@ -10,6 +10,7 @@ type options struct {
 	subErrorChanBuffer     int
 	subEventChanBuffer     int
 	pubUseOneChannel       bool
+	loggerLevel            int
 }
 
 const (
@@ -56,5 +57,17 @@ func EventChanBuffer(a int) Option {
 func ErrorChanBuffer(a int) Option {
 	return func(options *options) {
 		options.subErrorChanBuffer = a
+	}
+}
+
+func DefaultLogger() Option {
+	return func(options *options) {
+		options.loggerLevel = 1
+	}
+}
+
+func DebugLogger() Option {
+	return func(options *options) {
+		options.loggerLevel = 10000
 	}
 }

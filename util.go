@@ -9,27 +9,31 @@ import (
 	"github.com/streadway/amqp"
 )
 
-type reporter struct {
+type logger struct {
 	errChannel chan<- error
 
 	cap        int
 	currentCap int
+	level      int
 }
 
-func newReporter(cap int, ch chan<- error) *reporter {
-	return &reporter{
+func newLogger(level int, cap int, ch chan<- error) *logger {
+	return &logger{
 		cap:        cap,
 		errChannel: ch,
+		level:      level,
 	}
 }
 
-func (s *reporter) Report(err error) {
-	if s.currentCap < s.cap {
-		s.currentCap++
-		go func() {
-			s.errChannel <- err
-			s.currentCap--
-		}()
+func (s *logger) Log(level int, err error) {
+	if level < s.level {
+		if s.currentCap < s.cap {
+			s.currentCap++
+			go func() {
+				s.errChannel <- err
+				s.currentCap--
+			}()
+		}
 	}
 }
 
