@@ -61,6 +61,7 @@ func (o *observerWithReconnect) Pub(
 	if err != nil {
 		return fmt.Errorf("create channel: %v", err)
 	}
+	defer channel.Close()
 	err = channelExchangeDeclare(channel, exchangeName, exchangeCfg)
 	if err != nil {
 		return fmt.Errorf("exchange declare err: %v", err)
