@@ -28,6 +28,7 @@ func WithReconnect(codec Codec, url string, config amqp.Config, opts ...Option) 
 		pubProvider: newPubChanPool(ops.pubUseOneChannel),
 	}
 	errCh := make(chan error)
+	o.connection.Disconnected()
 	go o.reconnectLoop(errCh)
 	return &o, errCh
 }

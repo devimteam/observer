@@ -27,7 +27,6 @@ func newConnectionWrapper(url string, config amqp.Config, sleeper *sleeper) *con
 }
 
 func (s *connectionWrapper) restore(logger *logger) {
-	s.Disconnected()
 	logger.Log(2, fmt.Errorf("disconnected from %s", s.url))
 	for {
 		s.sleeper.Sleep()
@@ -41,7 +40,8 @@ func (s *connectionWrapper) restore(logger *logger) {
 		go func() {
 			logger.Log(0, fmt.Errorf("connection closed: %v", <-connection.NotifyClose(make(chan *amqp.Error))))
 			s.notifier.notify()
-			s.restore(logger)
+            s.Disconnected()
+            s.restore(logger)
 		}()
 		break
 	}
